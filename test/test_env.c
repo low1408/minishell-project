@@ -78,6 +78,24 @@ Test(env, set_null_on_existing_value_preserves_value)
 	env_free(list);
 }
 
+Test(env, find_distinguishes_export_only_from_absent)
+{
+	t_env *list;
+
+	list = NULL;
+	cr_assert_eq(env_set(&list, "A", NULL), 0);
+	cr_assert_null(env_get(list, "A"));
+	cr_assert_not_null(env_find(list, "A"));
+	cr_assert_null(env_find(list, "B"));
+	env_free(list);
+}
+
+Test(env, mutators_reject_null_list_pointer)
+{
+	cr_assert_eq(env_set(NULL, "A", "1"), ERR_INVAL);
+	cr_assert_eq(env_unset(NULL, "A"), ERR_INVAL);
+}
+
 Test(env, unset_head_middle_and_missing)
 {
 	t_env *list;

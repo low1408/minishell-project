@@ -36,6 +36,7 @@ typedef enum e_errcode
 	ERR_FORK = -7,
 	ERR_CD = -8,
 	ERR_REDIR = -9,
+	ERR_INVAL = -10,
 }	t_errcode;
 
 /**

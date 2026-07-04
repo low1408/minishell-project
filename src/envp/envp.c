@@ -91,6 +91,25 @@ void	env_free(t_env *list)
 }
 
 /**
+ * @brief Find a variable node by key.
+ * @param list Head of the environment list.
+ * @param key Variable name to find.
+ * @return The matching node, or NULL if not found.
+ */
+t_env	*env_find(t_env *list, const char *key)
+{
+	if (!key)
+		return (NULL);
+	while (list)
+	{
+		if (ft_strcmp(list->key, key) == 0)
+			return (list);
+		list = list->next;
+	}
+	return (NULL);
+}
+
+/**
  * @brief Look up a variable by key.
  * @param list Head of the environment list.
  * @param key Variable name to find.
@@ -98,15 +117,12 @@ void	env_free(t_env *list)
  */
 char	*env_get(t_env *list, const char *key)
 {
-	if (!key)
+	t_env	*node;
+
+	node = env_find(list, key);
+	if (!node)
 		return (NULL);
-	while (list)
-	{
-		if (ft_strcmp(list->key, key) == 0)
-			return (list->value);
-		list = list->next;
-	}
-	return (NULL);
+	return (node->value);
 }
 
 /**
@@ -114,13 +130,15 @@ char	*env_get(t_env *list, const char *key)
  * @param list Pointer to head pointer (may insert at head).
  * @param key Variable name.
  * @param value Variable value (NULL to mark export-only).
- * @return 0 on success, ERR_MALLOC on failure.
+ * @return 0 on success, ERR_MALLOC on allocation failure, ERR_INVAL on bad args.
  */
 int	env_set(t_env **list, const char *key, const char *value)
 {
 	t_env	*cur;
 	char	*new_val;
 
+	if (!list)
+		return (ERR_INVAL);
 	if (!key || !*key)
 		return (0);
 	cur = *list;
@@ -159,6 +177,8 @@ int	env_unset(t_env **list, const char *key)
 	t_env	*cur;
 	t_env	*prev;
 
+	if (!list)
+		return (ERR_INVAL);
 	if (!key || !*key)
 		return (0);
 	prev = NULL;
