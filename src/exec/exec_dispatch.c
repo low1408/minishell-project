@@ -1,4 +1,31 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   exec_dispatch.c                                    :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: kong <kong@student.42singapore.sg>         +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/07/04 17:38:21 by kong              #+#    #+#             */
+/*   Updated: 2026/07/04 17:38:21 by kong             ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #include "minishell.h"
+
+static int	setup_builtin_redirs(t_app *app, t_cmd_node *cmdnode,
+		int *temp_in, int *temp_out)
+{
+	*temp_in = dup(STDIN_FILENO);
+	*temp_out = dup(STDOUT_FILENO);
+	if (*temp_in == -1 || *temp_out == -1)
+		return (restore_fd(*temp_in, *temp_out), -1);
+	if (open_redirs(app, cmdnode) == -1)
+		return (restore_fd(*temp_in, *temp_out), close_redirsfd(cmdnode), -1);
+	if (do_dup2redirs(app, cmdnode) == -1)
+		return (restore_fd(*temp_in, *temp_out), close_redirsfd(cmdnode), -1);
+	close_redirsfd(cmdnode);
+	return (0);
+}
 
 int	exec_builtinproc(t_app *app, t_cmd_node *cmdnode)
 {
@@ -7,21 +34,11 @@ int	exec_builtinproc(t_app *app, t_cmd_node *cmdnode)
 	int		status;
 	char	**saved_envp;
 
-	// builtin runs in parent — needed for cd, export, exit, unset
 	temp_in = -1;
 	temp_out = -1;
-	if (cmdnode->redirs)
-	{
-		temp_in = dup(STDIN_FILENO);
-		temp_out = dup(STDOUT_FILENO);
-		if (temp_in == -1 || temp_out == -1)
-			return (restore_fd(temp_in, temp_out), -1);
-		if (open_redirs(app, cmdnode) == -1)
-			return (restore_fd(temp_in, temp_out), close_redirsfd(cmdnode), -1);
-		if (do_dup2redirs(app, cmdnode) == -1)
-			return (restore_fd(temp_in, temp_out), close_redirsfd(cmdnode), -1);
-		close_redirsfd(cmdnode);
-	}
+	if (cmdnode->redirs
+		&& setup_builtin_redirs(app, cmdnode, &temp_in, &temp_out) == -1)
+		return (-1);
 	saved_envp = app->envp;
 	if (cmdnode->envp)
 		app->envp = cmdnode->envp;
@@ -61,7 +78,7 @@ int	execute_ast(t_app *app, t_ast_node *ast)
 	if (ast->type == NODE_CMD)
 	{
 		if (!ast->content.cmd.argv || !ast->content.cmd.argv[0])
-		{	// no cmd but has redirects: bash creates/truncates the file
+		{
 			if (open_redirs(app, &ast->content.cmd) == -1)
 				return (close_redirsfd(&ast->content.cmd), -1);
 			close_redirsfd(&ast->content.cmd);

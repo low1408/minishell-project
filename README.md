@@ -199,20 +199,41 @@ order:
 3. `expand_redirs` — expands every redirection target, collapsing it back down to
    exactly one word.
 
-**Leading assignments (`expand_assignment.c`).** `is_valid_assignment` recognizes
-`NAME=value` (POSIX identifier rules via `is_name_start`) and splits it into
-`name`/raw value; `process_assignments` loops as long as `argv[0]` matches: the
-value is expanded and set into the environment immediately (`apply_assignment` →
-`env_set`/`update_env_array`), then the word is shifted out of `argv`, and the loop
-re-checks the new `argv[0]`. Because each assignment updates `app->envp` right away,
-later assignments in the same prefix see earlier ones (`A=1 B=$A cmd` resolves `B` to
-`1`). One quirk: a raw value ending in a literal, unquoted `;` has that trailing `;`
-silently stripped (`FOO=bar;` sets `FOO` to `bar`, not `bar;`) — a workaround for this
-shell not lexing `;` as a statement separator at all, so a semicolon typed at the end
-of a bash-style line doesn't leak into the value. Another deviation from bash: these
-assignments are **not** scoped to the one command — nothing restores the environment
-afterward, so `FOO=bar echo hi` leaves `FOO=bar` set in the shell for good, unlike
-bash's temporary-environment behaviour for that single command.
+**Leading assignments (`expand_assignment.c`).** `assignment_prefix_count` (built on
+`is_assignment_word`, POSIX identifier rules) scans `argv` for a run of leading
+`NAME=value` words; `process_assignments` then branches on what follows that run:
+
+- **Nothing follows** (`A=1 B=2` alone, no command) — each assignment is applied
+  straight to the shell's real environment (`env_set` on `app->env_list`, then
+  `update_env_array`) — permanent, exactly like a plain `export`.
+- **A command follows** (`A=1 B=2 cmd`) — the assignments are applied instead to a
+  *disposable* clone of the environment (`env_init(app->envp)` into a throwaway
+  `t_env` list), flattened into an array, and attached to that command's own AST node
+  (`t_cmd_node.envp`); the shell's real `app->env_list`/`app->envp` are never touched.
+  `exec_builtinproc`/`do_exec` (`exec_dispatch.c`, `exec_pipeline_run.c`) swap
+  `app->envp` to this array only for the duration of running that one command (builtin
+  call or `execve`), then restore the original array right after. This is what fixes
+  the shell-leak deviation from bash that used to exist here: `FOO=bar echo hi` no
+  longer leaves `FOO=bar` set in the shell afterward.
+
+One quirk, unrelated to scoping: a raw value ending in a literal, unquoted `;` still has
+that trailing `;` silently stripped (`FOO=bar;` sets `FOO` to `bar`, not `bar;`) — a
+workaround for this shell not lexing `;` as a statement separator at all, so a semicolon
+typed at the end of a bash-style line doesn't leak into the value.
+
+**The scoped environment only reaches code that actually reads `app->envp`.**
+Matching real bash, a prefix assignment is *not* visible to that same command's own
+argv/redirect/heredoc expansion (`A=hello echo $A` prints empty in bash too — the
+shell expands `$A` against its pre-assignment environment, before the temporary value
+is applied for the command it's attached to) — so `expand_cmd_node` reading
+`app->envp` there is correct, not a bug. Where the temporary environment *should* be
+visible is inside the command actually being run, and that's inconsistent across
+builtins: `exec_builtinproc` swaps `app->envp` to `cmdnode->envp` before calling
+`exec_builtin`, and `builtin_env` was rewritten to iterate `app->envp` specifically so
+it'd pick that up — but `cd` (`builtin_cd.c`), `export`, `unset`, and `exit` all read
+`app->env_list` (the permanent linked list) instead, which the swap never touches. So
+`HOME=/tmp cd` doesn't move to `/tmp` the way bash's does, even though `HOME=/tmp env`
+correctly shows the scoped value.
 
 **Core primitive: `expand_word`.** Everything above funnels through here — it's
 called once per remaining argv word, once per redirect target, and once per
@@ -279,8 +300,6 @@ the result collapses to **exactly one**, non-empty word — anything else is rep
 as an ambiguous redirect (`ERR_CMDNEXEC`), matching bash.
 
 ### Envp
-
-_`src/envp/`_
 
 The environment has **two representations kept deliberately in sync, not one**:
 a linked list (`t_env`, `key`/`value`/`next`) that's the mutable source of truth
@@ -355,20 +374,104 @@ because `export` updated the array itself.
 
 _`src/exec/`_
 
-Turns the expanded AST into real processes:
+Turns the expanded AST into real processes. Every command line funnels through
+`execute_ast` (`exec_dispatch.c`), which decides *before* touching any process whether
+it's even looking at a pipeline.
 
-- `exec_pipeline*.c` — counts the commands in a pipeline, opens the pipes, `fork`s
-  one child per command, and wires `stdin`/`stdout` through `dup2` before `execve`.
-- `exec_fd.c` — opens/duplicates redirection file descriptors per command
-  (`<`, `>`, `>>`), including `collect_heredocs`, which reads all `<<` delimiters
-  **before** the pipeline is spawned to avoid a deadlock between parent and child
-  writing/reading on the heredoc pipe.
-- `exec_path*.c` — resolves a command name against `PATH` (splitting it, joining each
-  entry with the command, checking executability).
-- `exec_dispatch.c` — the top-level entry point (`execute_ast`): runs a single builtin
-  directly in the parent process when the AST is one bare `NODE_CMD` and the command is
-  a builtin (so state like `cd`/`export` persists in the shell), otherwise spawns the
-  full pipeline via `fork`.
+Heredocs are collected first, once, over the whole AST — `collect_heredocs`
+(`exec_fd.c`) walks every `NODE_CMD` in the tree (both sides of every pipe) and reads
+all `<<` input up front, before any `fork`, to avoid a deadlock between parent and
+child on the heredoc pipe. (Kept at a surface level here on purpose — heredoc
+collection itself is dense enough to deserve its own pass.)
+
+**The one-command shortcut: `NODE_CMD` vs. everything else.** `execute_ast` only
+special-cases a *bare*, single `NODE_CMD` — the moment the AST has a `NODE_BINOP` (any
+pipe), it skips straight to `exec_allcmds` regardless of what's inside. For a bare
+`NODE_CMD` it branches three ways on `argv`:
+
+- **No `argv[0]` at all, but redirects present** — bash still creates/truncates the
+  target file even though there's no command to run (`> file` with nothing before it).
+  `open_redirs` + `close_redirsfd` run and the function returns immediately — no fork,
+  no `exec_allcmds`.
+- **`argv[0]` is a builtin** — `exec_builtinproc` runs it *in the parent shell process
+  itself*, no fork at all. This is the only path where `cd`, `export`, `unset`, `exit`
+  can actually mutate the running shell; the moment the same builtin appears anywhere in
+  a pipe (`cd /tmp | true`), it falls through to `exec_allcmds` instead and runs in a
+  forked child via `do_exec`'s own, second `is_builtin` check — so the directory/env
+  change is thrown away when that child exits. Two `is_builtin` checks exist for exactly
+  this reason: one gates the in-process fast path, the other is the correctness fallback
+  inside a pipeline.
+- **Anything else (an external command, alone)** — falls through to `exec_allcmds`,
+  which still forks it as a one-command "pipeline."
+
+**Running a builtin in-process still has to fake a subshell's fd isolation.**
+`exec_builtinproc` only touches fds if `cmdnode->redirs` is non-empty: it `dup`s the
+current stdin/stdout aside, applies the redirects with `open_redirs`/`do_dup2redirs`,
+runs the builtin, then `restore_fd`s the originals. Skipping this dance when there are
+no redirects avoids two needless `dup` calls on the hot path (a bare `cd`/`export` with
+no `>`/`<`). Without the restore step, `pwd > log.txt` would permanently redirect the
+*shell's own* stdout to `log.txt` after the command returned, since there's no child
+process boundary to contain the change.
+
+**Building the flat command array uses two different tree walks for two different
+jobs.** `count_cmds` (`exec_pipeline_utils.c`) only ever descends `->left`,
+incrementing once per node and stopping at the first non-`NODE_BINOP` — that's enough
+to get the right count *only* because of how the parser folds a pipeline (`a | b | c`
+→ `((a,b),c)`, one extra `BINOP` layer per additional command along that same left
+spine), not because it's actually visiting every command node. The real traversal,
+`_flatten_cmds`, recurses into *both* children for a `BINOP` and only records a pointer
+at a leaf — that's what puts `[cat, grep, wc]` in the array in left-to-right source
+order despite the tree being right-heavy. `count_cmds` runs first purely to size the
+array before `_flatten_cmds` fills it in.
+
+**Per-stage fd plumbing (`start_pipeline`, `exec_pipeline.c`).** For each command in
+the flattened array, in order: `setup_pipe` opens a fresh pipe *unless this is the last
+command* (`iter_i < n_cmd - 1`); a `fork` follows. In the child, `do_childproc` closes
+the unused read end of the pipe it just helped create (it only ever needs the write
+end), then `dup2`s `prevfdin` → stdin (skipped for the first command) and the new
+pipe's write end → stdout (skipped for the last), *then* applies the command's own
+redirects on top — meaning an explicit `>`/`<` on a piped command always wins over the
+pipe wiring, since `do_dup2redirs` runs after and simply `dup2`s over whatever the pipe
+just set. In the parent, `update_pipeops` immediately closes the previous read end and
+the just-forked write end — closing the write end in the parent is what lets the
+*next* reader ever see EOF; holding it open in a still-running parent is the classic
+way to deadlock a pipeline. If a `fork()` itself fails partway through, the caller
+closes whatever fds the struct is still holding and reaps everyone forked so far
+(`free_pipeops(pipeops, i - 1)`) — closing the previous pipe's read end this way is
+enough to make the already-running earlier command fail on its next write (`SIGPIPE`)
+and unwind on its own, no explicit kill needed.
+
+**Sample case:** `cat file.txt | grep foo | wc -l` — three commands, so two pipes.
+`cat` gets a fresh pipe, no `prevfdin` (nothing to read), and writes into it; `grep`
+reads that pipe, gets its own fresh pipe, and writes into *that*; `wc`, being last,
+gets no pipe of its own — its stdout falls through untouched to the terminal. As each
+child forks, the parent closes its own copies of the read end just handed off and the
+write end just created, so `grep` sees EOF the instant `cat` finishes, and `wc` sees
+EOF the instant `grep` finishes, rather than hanging forever waiting for a reader/writer
+that's already gone.
+
+**Exit status is the last command's, everyone else is just reaped.** After the fork
+loop, `get_lastcmdstatus` specifically `waitpid`s on `pids[n_cmd - 1]` to get the exit
+code (translating a signal death into `128 + signum`, with the `Quit (core
+dumped)`/newline side effects) — matching bash's rule that a pipeline's status is its
+last command's. `free_pipeops` then reaps everyone *before* that, discarding their
+statuses, purely to avoid zombies.
+
+**PATH resolution (`resolvecmdpath`, `exec_path.c`) short-circuits on a literal `/`.**
+If `argv[0]` contains a `/` (`./a.out`, `/bin/ls`), `PATH` is never consulted at all —
+`cmdwithpath` just `access(X_OK)`-checks that exact path, matching POSIX/bash exactly.
+Otherwise `getrawpathlst` splits `PATH` on `:` (substituting `.` for an empty entry —
+a leading/trailing/doubled `:`, per POSIX) and `matchcmdpath` tries each directory in
+order. The search loop's break condition matters: it stops not only on success, but
+also the *first* time a candidate exists but isn't executable (`EX_CMD_NEXEC`) — so a
+non-executable match earlier on `PATH` reports "permission denied" (126) instead of
+silently trying later directories for another file of the same name, matching bash's
+"first match on the filename wins" rather than "first *working* match wins." A subtler
+point: every failed candidate along the way — even ones that don't stop the loop —
+still sets `app->exitcode` via `setexecerrno`, so once a later directory *does*
+succeed, `resolvecmdpath` explicitly resets `app->exitcode` to `EX_OK` before returning;
+otherwise a stray "not found in an earlier directory" code could leak through even
+though the command was ultimately found and hasn't even run yet.
 
 Exit statuses follow POSIX conventions (`t_exitcode` in `include/minishell.h`):
 `126` for found-but-not-executable, `127` for command-not-found, `128 + signum` for a

@@ -67,8 +67,7 @@ struct s_ast_node
 };
 
 t_ast_node	*ast_new_cmd(char **argv, t_redir *redirs, t_span span);
-t_ast_node	*ast_new_binop(t_binop_type op, t_ast_node *left,
-				t_ast_node *right, t_span span);
+t_ast_node	*ast_new_binop(t_binop_type op, t_ast_node *left, t_ast_node *right, t_span span);
 void		ast_free(t_ast_node *node);
 
 #endif

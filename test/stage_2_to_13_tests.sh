@@ -199,8 +199,8 @@ second
 END' 'second'
 
 # Stage 10 to 12: environment, signals, exit status
-expect_stdout 'missing PATH handled as command not found' 'unset PATH
-no_such_command' ''
+expect_status 'missing PATH handled as command not found' 'unset PATH
+no_such_command' 127
 expect_stdout 'exit status expands after false' 'false
 echo $?' '1'
 expect_stdout 'exit status expands after true' 'true

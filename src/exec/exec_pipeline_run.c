@@ -1,3 +1,14 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   exec_pipeline_run.c                                :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: kong <kong@student.42singapore.sg>         +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2026/07/04 17:57:32 by kong              #+#    #+#             */
+/*   Updated: 2026/07/04 17:57:35 by kong             ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
 
 #include "minishell.h"
 
@@ -6,7 +17,6 @@ void	get_lastcmdstatus(t_app *app, pid_t *pids, int id_lastpid)
 	int	status;
 
 	status = 0;
-	// when waitpid is blocking, a signal can interrupt and cause it to return -1
 	while (waitpid(pids[id_lastpid], &status, 0) == -1)
 	{
 		if (errno != EINTR)
@@ -39,6 +49,7 @@ void	wait_allpids(pid_t *pids, int pid_id)
 		i++;
 	}
 }
+
 int	do_exec(t_app *app, t_cmd_node *cmdnode)
 {
 	char	*cmdpath;
@@ -62,8 +73,8 @@ int	do_exec(t_app *app, t_cmd_node *cmdnode)
 	{
 		free(cmdpath);
 		setexecerrno(app);
-		if (!ft_strhaschr(cmdnode->argv[0], '/') &&
-			app->exitcode == EX_CMD_NOTFOUND)
+		if (!ft_strhaschr(cmdnode->argv[0], '/')
+			&& app->exitcode == EX_CMD_NOTFOUND)
 			return (app->envp = saved_envp,
 				printerr_cmdnfound(cmdnode->argv[0]), -1);
 		return (app->envp = saved_envp, ft_perror(cmdnode->argv[0]), -1);
