@@ -7,11 +7,12 @@
  * @param input Raw word with quotes preserved from the lexer.
  * @param envp Environment array (KEY=VALUE).
  * @param last_status Last command exit status.
- * @param out Output word list of expanded words.
+ * @param out_words Output NULL-terminated expanded words.
+ * @param out_count Output number of expanded words.
  * @return 0 on success, ERR_MALLOC on failure.
  */
 int	expand_word(const char *input, char **envp, int last_status,
-		t_wordlist *out);
+		char ***out_words, size_t *out_count);
 
 /**
  * @brief Expand a command argv list into a new argv list.

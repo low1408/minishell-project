@@ -12,7 +12,7 @@
 
 #include "minishell.h"
 
-int	expand_word(const char *input, char **envp, int last_status,
+static int	expand_wordlist(const char *input, char **envp, int last_status,
 		t_wordlist *out)
 {
 	t_expand_ctx	ctx;
@@ -33,6 +33,22 @@ int	expand_word(const char *input, char **envp, int last_status,
 	return (0);
 }
 
+int	expand_word(const char *input, char **envp, int last_status,
+		char ***out_words, size_t *out_count)
+{
+	t_wordlist	wl;
+
+	if (!out_words || !out_count)
+		return (ERR_MALLOC);
+	*out_words = NULL;
+	*out_count = 0;
+	if (expand_wordlist(input, envp, last_status, &wl) != 0)
+		return (ERR_MALLOC);
+	*out_words = wl.items;
+	*out_count = wl.count;
+	return (0);
+}
+
 int	expand_argv(char **argv, char **envp, int last_status, char ***out_argv)
 {
 	t_argv_builder	ab;
@@ -44,7 +60,7 @@ int	expand_argv(char **argv, char **envp, int last_status, char ***out_argv)
 	i = 0;
 	while (argv && argv[i])
 	{
-		if (expand_word(argv[i], envp, last_status, &wl) != 0)
+		if (expand_wordlist(argv[i], envp, last_status, &wl) != 0)
 			return (argv_builder_free(&ab), ERR_MALLOC);
 		if (push_words_to_builder(&ab, wl.items, wl.count) != 0)
 			return (argv_builder_free(&ab), ERR_MALLOC);
@@ -65,7 +81,7 @@ int	expand_redirs(t_redir *redir, char **envp, int last_status)
 			redir = redir->next;
 			continue ;
 		}
-		if (expand_word(redir->target, envp, last_status, &wl) != 0)
+		if (expand_wordlist(redir->target, envp, last_status, &wl) != 0)
 			return (ERR_MALLOC);
 		if (wl.count != 1 || wl.items[0][0] == '\0')
 		{

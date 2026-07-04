@@ -12,21 +12,6 @@
 
 #include "minishell.h"
 
-t_app	*init_app(char **envp)
-{
-	t_app	*app;
-
-	app = malloc(sizeof(t_app));
-	if (!app)
-		return (printerr_syscall(ERR_MALLOC), NULL);
-	app->env_list = env_init(envp);
-	app->envp = env_to_array(app->env_list);
-	app->exitcode = EX_OK;
-	app->tokensll = NULL;
-	app->ast = NULL;
-	return (app);
-}
-
 int	main(int ac, char **av, char **envp)
 {
 	(void)av;

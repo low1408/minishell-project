@@ -19,8 +19,22 @@
  */
 int	builtin_env(t_app *app)
 {
+	char	**envp;
 	t_env	*cur;
+	int		i;
 
+	envp = app->envp;
+	if (envp)
+	{
+		i = 0;
+		while (envp[i])
+		{
+			ft_putstr_fd(envp[i], 1);
+			write(1, "\n", 1);
+			i++;
+		}
+		return (EX_OK);
+	}
 	cur = app->env_list;
 	while (cur)
 	{

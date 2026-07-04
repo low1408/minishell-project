@@ -44,6 +44,7 @@ typedef struct s_ast_node t_ast_node;
 typedef struct s_cmd_node
 {
 	char		**argv;
+	char		**envp;
 	t_redir		*redirs;
 }	t_cmd_node;
 

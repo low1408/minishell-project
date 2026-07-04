@@ -271,10 +271,12 @@ Test(builtins, exit_numeric_and_non_numeric)
 {
 	char	*argv_num[] = {"exit", "42", NULL};
 	char	*argv_bad[] = {"exit", "abc", NULL};
+	char	*argv_bad_extra[] = {"exit", "abc", "2", NULL};
 	char	*argv_none[] = {"exit", NULL};
 
 	cr_assert_eq(run_exit_and_get_status(argv_num, 7), 42);
 	cr_assert_eq(run_exit_and_get_status(argv_bad, 7), 2);
+	cr_assert_eq(run_exit_and_get_status(argv_bad_extra, 7), 2);
 	cr_assert_eq(run_exit_and_get_status(argv_none, 7), 7);
 }
 

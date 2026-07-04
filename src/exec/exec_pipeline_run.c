@@ -42,10 +42,14 @@ void	wait_allpids(pid_t *pids, int pid_id)
 int	do_exec(t_app *app, t_cmd_node *cmdnode)
 {
 	char	*cmdpath;
+	char	**saved_envp;
 	int		status;
 
 	if (!cmdnode->argv)
 		return (exit(EX_OK), -1);
+	saved_envp = app->envp;
+	if (cmdnode->envp)
+		app->envp = cmdnode->envp;
 	if (is_builtin(cmdnode->argv[0]))
 	{
 		status = exec_builtin(cmdnode->argv, app);
@@ -53,9 +57,10 @@ int	do_exec(t_app *app, t_cmd_node *cmdnode)
 	}
 	cmdpath = resolvecmdpath(app, cmdnode->argv);
 	if (!cmdpath)
-		return (-1);
+		return (app->envp = saved_envp, -1);
 	if (execve(cmdpath, cmdnode->argv, app->envp) == -1)
 	{
+		app->envp = saved_envp;
 		free(cmdpath);
 		setexecerrno(app);
 		if (!ft_strhaschr(cmdnode->argv[0], '/') &&

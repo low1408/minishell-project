@@ -37,6 +37,7 @@ t_ast_node	*ast_new_cmd(char **argv, t_redir *redirs, t_span span)
 	node->type = NODE_CMD;
 	node->span = span;
 	node->content.cmd.argv = argv;
+	node->content.cmd.envp = NULL;
 	node->content.cmd.redirs = redirs;
 	return (node);
 }
@@ -64,6 +65,7 @@ void	ast_free(t_ast_node *node)
 	if (node->type == NODE_CMD)
 	{
 		freelst(node->content.cmd.argv);
+		freelst(node->content.cmd.envp);
 		free_redirs(node->content.cmd.redirs);
 	}
 	else if (node->type == NODE_BINOP)
